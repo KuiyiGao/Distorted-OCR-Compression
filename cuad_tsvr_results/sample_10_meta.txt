@@ -1,0 +1,4 @@
+Question: Highlight the parts (if any) of this contract related to "No-Solicit Of Employees" that should be reviewed by a lawyer. Details: Is there a restriction on a party’s soliciting or hiring employees and/or contractors from the  counterparty, whether during the contract or after the contract ends (or both)?
+QA ID: LIMEENERGYCO_09_09_1999-EX-10-DISTRIBUTOR AGREEMENT__No-Solicit Of Employees
+Total Combined Window Chunks Overlapped: 24
+High Saliency Terms Detected (Extracted strictly from Context Strings): ['ten', '(10)', 'years', '(the', '"Term")', 'which', 'shall', 'commence', 'on', 'the', 'date', 'upon', 'which', 'Sample,', 'as']

@@ -1,0 +1,4 @@
+Question: Highlight the parts (if any) of this contract related to "Exclusivity" that should be reviewed by a lawyer. Details: Is there an exclusive dealing  commitment with the counterparty? This includes a commitment to procure all “requirements” from one party of certain technology, goods, or services or a prohibition on licensing or selling technology, goods or services to third parties, or a prohibition on  collaborating or working with other parties), whether during the contract or  after the contract ends (or both).
+QA ID: LIMEENERGYCO_09_09_1999-EX-10-DISTRIBUTOR AGREEMENT__Exclusivity
+Total Combined Window Chunks Overlapped: 26
+High Saliency Terms Detected (Extracted strictly from Context Strings): ['be', 'ten', '(10)', 'years', '(the', '"Term")', 'which', 'shall', 'commence', 'on', 'the', 'date', 'upon', 'which']
