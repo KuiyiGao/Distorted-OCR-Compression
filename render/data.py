@@ -3,14 +3,17 @@ import torch
 import random
 from torch.utils.data import Dataset
 
-def prepare_cuad_mrc_data(json_path, tokenizer, max_length=512, stride=128):
+def prepare_cuad_mrc_data(json_path, tokenizer, max_length=512, stride=None, n_docs=None):
     print(f"Loading MRC data from {json_path}...")
     with open(json_path, 'r', encoding='utf-8') as f:
         cuad_data = json.load(f)['data']
 
-    target_docs = len(cuad_data) // 2
-    cuad_data = cuad_data[:target_docs]
-    print(f"Using exactly 50% of the corpus: {target_docs} documents")
+    # Q3: stride derived from max_length if not given; n_docs replaces the 50% hardcode
+    if stride is None:
+        stride = max_length // 4
+    if n_docs is not None:
+        cuad_data = cuad_data[:n_docs]
+    print(f"Using {len(cuad_data)} documents (stride={stride})")
 
     questions, contexts, char_labels_list, qa_ids = [], [], [], []
     for doc_idx, document in enumerate(cuad_data):
@@ -110,8 +113,8 @@ def prepare_cuad_mrc_data(json_path, tokenizer, max_length=512, stride=128):
     return dataset
 
 class CUADQADataset(Dataset):
-    def __init__(self, json_path, tokenizer, max_length=512):
-        self.data = prepare_cuad_mrc_data(json_path, tokenizer, max_length=max_length)
+    def __init__(self, json_path, tokenizer, max_length=512, n_docs=None):
+        self.data = prepare_cuad_mrc_data(json_path, tokenizer, max_length=max_length, n_docs=n_docs)
     def __len__(self):
         return len(self.data)
     def __getitem__(self, idx):
