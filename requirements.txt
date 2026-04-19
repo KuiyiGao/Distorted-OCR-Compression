@@ -1,0 +1,16 @@
+# Runtime: Linux + NVIDIA GPU (sm_80+ recommended, i.e. A100/L4/A10G), CUDA 12.1, Python 3.10+
+# torch is expected to be preinstalled (Colab provides torch==2.4.x with CUDA 12.1).
+transformers==4.46.3
+tokenizers==0.20.3
+accelerate>=0.34,<1.1
+einops
+addict
+easydict
+Pillow
+matplotlib
+seaborn
+pandas
+requests
+tqdm
+# Install AFTER torch, with: pip install flash-attn==2.7.3 --no-build-isolation
+flash-attn==2.7.3
