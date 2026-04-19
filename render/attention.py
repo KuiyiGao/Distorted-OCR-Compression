@@ -21,6 +21,7 @@ def extract_attention_saliency(model, input_ids, attention_mask, device):
         inputs = input_ids.unsqueeze(0) if input_ids.dim() == 1 else input_ids
         mask = attention_mask.unsqueeze(0) if attention_mask.dim() == 1 else attention_mask
         
-        _, logits = model(inputs.to(device), mask.to(device))
+        outputs = model(input_ids=inputs.to(device), attention_mask=mask.to(device))
+        logits = outputs.logits
         probs = torch.softmax(logits, dim=-1)[:, :, 1].squeeze().cpu().numpy()
     return probs
