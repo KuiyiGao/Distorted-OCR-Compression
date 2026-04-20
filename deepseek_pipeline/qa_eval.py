@@ -60,16 +60,17 @@ class ApiQAReader:
     DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
     QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
-    def __init__(self, provider: str = "deepseek"):
+    def __init__(self, provider: str = "deepseek", model_name: str | None = None):
         self.provider = provider
         if provider == "deepseek":
             self.api_key_env = "DEEPSEEK_API_KEY"
             self.endpoint = self.DEEPSEEK_ENDPOINT
-            self.model_name = "deepseek-chat"
-        elif provider == "qwen":
+            self.model_name = model_name or "deepseek-chat"
+        elif provider in ("qwen", "qwen-long"):
             self.api_key_env = "DASHSCOPE_API_KEY"
             self.endpoint = self.QWEN_ENDPOINT
-            self.model_name = "qwen-plus"
+            # qwen-long supports ~10M-token inputs; qwen-plus caps at ~32k.
+            self.model_name = model_name or ("qwen-long" if provider == "qwen-long" else "qwen-plus")
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -115,7 +116,11 @@ class ApiQAReader:
             ans = str(parsed.get("answer", "")).strip()
             conf = float(parsed.get("confidence", 3)) / 5.0
         except Exception:
-            ans, conf = raw, 0.5
+            # Fall back to raw text with a neutral confidence, but keep the
+            # value readable rather than dumping the raw JSON string.
+            m = re.search(r'"answer"\s*:\s*"([^"]*)"', raw)
+            ans = (m.group(1) if m else raw).strip()
+            conf = 0.5
         return ans, max(0.0, min(1.0, conf))
 
     def score(self, context: str, question: str, gold_answers: list[str]) -> QAPrediction:
