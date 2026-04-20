@@ -220,6 +220,105 @@ def get_render_attributes(weight, min_size=12, max_size=50):
 def render_tsvr_image(word_weights, image_width=800, max_font_size=50):
     return render_img(word_weights, image_width=image_width, s_max=max_font_size)
 
+
+def render_tsvr_page(word_weights, n_words_budget, image_width=1024,
+                     page_aspect=1.414, margin=24, s_min=14, s_max=40,
+                     topic_threshold=0.55, topic_max_gap=4):
+    """Saliency-budgeted single-page render for OCR compression.
+
+    Selects the top-`n_words_budget` words by weight (preserving original
+    reading order), then lays them out on a fixed-aspect canvas of
+    `image_width x image_width*page_aspect`. Font size is auto-shrunk so
+    all kept words fit — guaranteeing the output is a page-shaped image
+    DeepSeek-OCR can actually read (vs. the 1:100 scrolls produced by
+    `render_tsvr_image` on long contracts, which get crushed during the
+    model's internal resize to its patch grid).
+
+    The kept words are still coloured by topic/saliency exactly like
+    `render_img`, so DeepSeek-OCR sees the same visual salience cues.
+    """
+    if not word_weights:
+        return Image.new('RGB', (image_width, int(image_width * page_aspect)),
+                         color=(255, 255, 255))
+
+    n_total = len(word_weights)
+    B = max(1, min(n_words_budget, n_total))
+
+    weights = np.array([w for _, w in word_weights], dtype=np.float32)
+    if B < n_total:
+        # Keep top-B by weight, preserving reading order.
+        kept_idx = np.argpartition(-weights, B - 1)[:B]
+        kept_idx = np.sort(kept_idx)
+    else:
+        kept_idx = np.arange(n_total)
+    kept = [word_weights[i] for i in kept_idx]
+    kept_weights = weights[kept_idx]
+
+    # Saliency colour/topic computed on the KEPT subset (high-contrast page).
+    mu = float(np.percentile(kept_weights, 60.0)) if len(kept_weights) else 0.0
+    phi = 1.0 / (1.0 + np.exp(-4.5 * (kept_weights - mu)))
+    topic_ids = assign_topic_ids(phi, threshold=topic_threshold, max_gap=topic_max_gap)
+
+    canvas_h = int(image_width * page_aspect)
+    usable_w = image_width - 2 * margin
+    usable_h = canvas_h - 2 * margin
+
+    font_path = _find_font()
+
+    # Pick the largest font that still fits all B words on the page.
+    # Two-pass: measure at probe size then scale by sqrt(area_ratio).
+    def _layout_heights(font_size):
+        """Dry-run layout; return total height used. Returns None if any word
+        wider than usable_w at this font (forces a shrink)."""
+        font = _get_font(font_path, font_size)
+        space_w = font_size * 0.30
+        line_h = int(font_size * 1.30)
+        x = 0.0
+        y = 0
+        for (word, _) in kept:
+            bbox = font.getbbox(word)
+            w = bbox[2] - bbox[0]
+            if w > usable_w and font_size > s_min:
+                return None
+            if x + w > usable_w:
+                x = 0.0
+                y += line_h
+            x += w + space_w
+        return y + line_h
+
+    lo, hi = s_min, s_max
+    best = s_min
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        h = _layout_heights(mid)
+        if h is not None and h <= usable_h:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    font_size = best
+
+    img = Image.new('RGB', (image_width, canvas_h), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    font = _get_font(font_path, font_size)
+    space_w = int(font_size * 0.30)
+    line_h = int(font_size * 1.30)
+
+    x = margin
+    baseline = margin + font_size
+    for (word, _), p, tid in zip(kept, phi, topic_ids):
+        bbox = draw.textbbox((0, 0), word, font=font)
+        w = bbox[2] - bbox[0]
+        if x + w > image_width - margin:
+            x = margin
+            baseline += line_h
+            if baseline + 4 > canvas_h - margin:
+                break  # ran out of page (shouldn't happen after binary search)
+        color = _weight_to_color(float(p), topic_id=tid)
+        draw.text((x, baseline), word, font=font, fill=color, anchor='ls')
+        x += w + space_w
+    return img
+
 def visualize_single_attention(word_weights, output_path):
     fig = plt.figure(figsize=(14, 5))
     from render.utils import group_by_stem_and_sort
