@@ -1,4 +1,0 @@
-Question: Highlight the parts (if any) of this contract related to "Document Name" that should be reviewed by a lawyer. Details: The name of the contract
-QA ID: LIMEENERGYCO_09_09_1999-EX-10-DISTRIBUTOR AGREEMENT__Document Name
-Total Combined Window Chunks Overlapped: 21
-High Saliency Terms Detected (Extracted strictly from Context Strings): ['be', 'ten', '(10)', 'years', '(the', '"Term")', 'which', 'shall', 'commence', 'on', 'the', 'date', 'upon', 'which', 'Sample,', 'as']

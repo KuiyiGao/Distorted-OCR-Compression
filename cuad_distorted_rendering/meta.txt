@@ -1,0 +1,48 @@
+Mode: all-clause aggregation
+Clause types queried: ['Document Name', 'Parties', 'Agreement Date', 'Effective Date', 'Expiration Date', 'Renewal Term', 'Notice Period To Terminate Renewal', 'Governing Law', 'Most Favored Nation', 'Non-Compete', 'Exclusivity', 'No-Solicit Of Customers', 'Competitive Restriction Exception', 'No-Solicit Of Employees', 'Non-Disparagement', 'Termination For Convenience', 'Rofr/Rofo/Rofn', 'Change Of Control', 'Anti-Assignment', 'Revenue/Profit Sharing', 'Price Restrictions', 'Minimum Commitment', 'Volume Restriction', 'Ip Ownership Assignment', 'Joint Ip Ownership', 'License Grant', 'Non-Transferable License', 'Affiliate License-Licensor', 'Affiliate License-Licensee', 'Unlimited/All-You-Can-Eat-License', 'Irrevocable Or Perpetual License', 'Source Code Escrow', 'Post-Termination Services', 'Audit Rights', 'Uncapped Liability', 'Cap On Liability', 'Liquidated Damages', 'Warranty Duration', 'Insurance', 'Covenant Not To Sue', 'Third Party Beneficiary']
+Model: akdeniz27/roberta-base-cuad
+Tiers: primary=120 secondary=780 tertiary=5098
+Primary tokens: ['Electric', 'LLC', '7th', 'September,', '1999.', 'exclusive', 'Market,', 'subject', 'terms', 'conditions', 'License.', 'grants', 'Upon', 'termination', 'License', 'Illinois.', '(10)', 'Obligation.', 'Obligation.', 'LC', 'shall', '(2)', 'term,', 'shall', 'renewed', '(5)', 'consecutive', 'bimonthly', 'periods.', '$250,000.00', 'must', 'total', '(12)', 'period.', '-2-', 'provided', 'entitled', 'LC', 'terms', 'LC.', 'renewals', 'Sales', 'may', 'liability', 'upon', 'shall', 'not', 'source', 'shall', 'jointly', 'determine', 'remedy', '1.6', '-4-', '2000', 'Term', 'right', 'Unless', 'If', 'not', 'Annual', '90', 'Old', 'If,', '(24)', 'warranty', 'shall', 'entitled', 'dispute', '3.5', 'Service', 'Territory.', 'may', 'terminate', 'upon', '30', 'effective', 'immediately', 'upon', 'written', 'notice.', 'termination', 'not', 'Upon', 'termination', '-9-', 'rights', 'party(ies).', '-10-', 'intellectual', 'rights', '(provided', 'except', 'upon', '(30)', 'During', 'Term', '-11-', 'Term', 'Electric', 'City', 'Illinois', 'L.L.C.', 'during', 'Term', 'Samples', 'shall', 'count', 'toward', 'construed', 'according', 'laws', 'State', 'Illinois.', 'may', 'executed', 'Electric', 'Corp.', 'Electric', '-14-']
+
+Per-clause-type S_max (descending):
+  1.4998  Governing Law
+  1.4995  Renewal Term
+  1.4981  Notice Period To Terminate Renewal
+  1.4940  Minimum Commitment
+  1.4903  Joint Ip Ownership
+  1.4903  Covenant Not To Sue
+  1.4537  Exclusivity
+  1.4424  Parties
+  1.4373  Document Name
+  1.4172  Effective Date
+  1.3607  Change Of Control
+  1.3057  Non-Compete
+  1.2873  Termination For Convenience
+  1.2362  Volume Restriction
+  1.2135  Non-Disparagement
+  1.1730  Rofr/Rofo/Rofn
+  1.1659  Audit Rights
+  1.1657  Agreement Date
+  1.1651  Cap On Liability
+  1.1644  Ip Ownership Assignment
+  1.1294  Non-Transferable License
+  1.0967  License Grant
+  1.0850  Affiliate License-Licensee
+  1.0523  Competitive Restriction Exception
+  1.0172  Expiration Date
+  1.0049  Liquidated Damages
+  0.9647  Irrevocable Or Perpetual License
+  0.9387  Source Code Escrow
+  0.9036  No-Solicit Of Employees
+  0.8866  Third Party Beneficiary
+  0.8691  Anti-Assignment
+  0.8311  Insurance
+  0.8236  Warranty Duration
+  0.7901  Revenue/Profit Sharing
+  0.7229  Uncapped Liability
+  0.7022  No-Solicit Of Customers
+  0.6976  Most Favored Nation
+  0.6345  Price Restrictions
+  0.5279  Unlimited/All-You-Can-Eat-License
+  0.4720  Affiliate License-Licensor
+  0.3466  Post-Termination Services
