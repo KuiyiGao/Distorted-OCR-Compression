@@ -1,8 +1,15 @@
 """Thin wrapper around DeepSeek-OCR.
 
-Hardware note: the upstream model requires CUDA + FlashAttention-2 +
-bfloat16. It will *not* run on Apple-Silicon MPS or CPU. Target: Colab
-A100-40G (also works on A10G / L4 with reduced batch).
+Hardware note: the upstream model requires CUDA + bfloat16. It will
+*not* run on Apple-Silicon MPS or CPU. Target: Colab A100-40G (also
+works on A10G / L4 with reduced batch).
+
+Attention backend: defaults to PyTorch's built-in SDPA, which already
+dispatches to FlashAttention-2 kernels on Ampere/Ada/Hopper GPUs in
+bf16/fp16 — so no separate `flash-attn` wheel needs to be compiled.
+Pass ``attn_implementation="flash_attention_2"`` to force the external
+package (only useful if you have a matching prebuilt wheel) or
+``"eager"`` to fall back to the pure-PyTorch path.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ class DeepSeekOCRCompressor:
         model_id: str = "deepseek-ai/DeepSeek-OCR",
         device: str = "cuda",
         dtype: str = "bfloat16",
+        attn_implementation: str = "sdpa",
     ):
         from transformers import AutoModel, AutoTokenizer
         import torch
@@ -43,12 +51,31 @@ class DeepSeekOCRCompressor:
         self._torch = torch
         torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        self.model = AutoModel.from_pretrained(
-            model_id,
-            _attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-            use_safetensors=True,
-        )
+        # Try the requested backend, then fall back to widely-available ones so
+        # users on bleeding-edge torch versions (no prebuilt flash-attn wheel)
+        # are not blocked by an hour-long source build.
+        backend_chain = []
+        for b in (attn_implementation, "sdpa", "eager"):
+            if b not in backend_chain:
+                backend_chain.append(b)
+        last_err: Optional[Exception] = None
+        for backend in backend_chain:
+            try:
+                self.model = AutoModel.from_pretrained(
+                    model_id,
+                    _attn_implementation=backend,
+                    trust_remote_code=True,
+                    use_safetensors=True,
+                )
+                self.attn_implementation = backend
+                break
+            except (ImportError, ValueError) as e:  # flash_attn missing, etc.
+                last_err = e
+                continue
+        else:
+            raise RuntimeError(
+                f"Could not load DeepSeek-OCR with any of {backend_chain}: {last_err}"
+            )
         self.model = self.model.eval().to(device).to(torch_dtype)
         self.device = device
 
