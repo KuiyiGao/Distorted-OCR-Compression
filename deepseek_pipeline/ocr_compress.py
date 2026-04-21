@@ -100,6 +100,9 @@ class DeepSeekOCRCompressor:
             crop_mode=cfg["crop_mode"],
             save_results=False,
             test_compress=False,
+            eval_mode=True,   # REQUIRED: upstream infer() only returns decoded
+                              # text when eval_mode=True, otherwise it prints
+                              # to stdout and returns None.
         )
         if isinstance(decoded, (list, tuple)):
             decoded = decoded[0] if decoded else ""
