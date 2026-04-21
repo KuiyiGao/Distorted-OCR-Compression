@@ -40,6 +40,7 @@ For each test context with `N` original tokens and target ratio `R ∈ {5, 10}`:
 |---|---|---|
 | `full` | original context | — (upper bound) |
 | `prune-R` | top-`N/R` tokens (word-level) | MemSlot trained saliency, reading-order preserved |
+| `selective-R` | top-`N/R` tokens by RoBERTa-MLM self-information | Selective-Context / LLMLingua-lite (Li 2023, Jiang 2023) |
 | `summary-R` | API-summary ≤ `N/R` tokens | `deepseek-chat` → `qwen-plus` fallback |
 | `random-R` | random sample of `N/R` text tokens | uniform, seeded by `(doc_hash, R)` |
 | `lead-R` | first `N/R` tokens | — (truncation baseline) |
@@ -48,7 +49,7 @@ For each test context with `N` original tokens and target ratio `R ∈ {5, 10}`:
 | `summary-ocr-R` | OCR decode of summary text rendered on A4 | uniform font, no saliency |
 | `prune-ocr-R` | OCR decode of pruned text rendered on A4 | uniform font, no saliency |
 
-Total labels: `1 + 2 × 8 = 17` → about **544 QA reader calls** per run.
+Total labels: `1 + 2 × 9 = 19` → about **608 QA reader calls** per run.
 
 ### 3.1 Why render-then-crop (not chunk-then-render)
 
@@ -100,7 +101,31 @@ with the text output of a different compressor. Any residual gap between
 `memslot-ocr` and `{summary,prune}-ocr` at the same `R` is attributable to
 MemSlot's saliency — not to OCR being a "magic compressor".
 
-### 3.3 Why the no-training MemSlot variant
+### 3.3 Why Selective-Context / LLMLingua-lite
+
+`prune-R` uses MemSlot saliency — a *supervised-style* signal learned via
+reconstruction on CUAD train contracts. To keep the comparison honest against
+current text-compression literature, we also include a **zero-shot,
+information-theoretic** baseline in the spirit of Selective-Context
+(Li et al., EMNLP 2023) and LLMLingua (Jiang et al., EMNLP 2023):
+
+1. Slide a 512-token window over the context (stride 256) through frozen
+   `roberta-base` MLM.
+2. For every token, take `-log p(token | bidirectional context)` — the
+   self-information under the LM.
+3. Collapse subword scores to word scores by max-pooling (robust to
+   tokenization boundaries), Gaussian-smooth (σ=2 words) to suppress
+   single-word spikes, min-max rescale to `[0,1]`.
+4. Feed the resulting `(word, score)` list into the same `SaliencyPruner`
+   that MemSlot uses, so `ratio_text` is computed identically.
+
+This gives us a modern, training-free compression baseline that is
+*architecturally comparable* to MemSlot (same tokenizer family, same
+downstream pruner) but uses a completely different signal (token likelihood
+vs. learned slot attention). If `prune-R` beats `selective-R`, MemSlot's
+learned saliency is adding value beyond raw LM surprisal.
+
+### 3.4 Why the no-training MemSlot variant
 
 `MemSlotSaliency.word_weights()` only relies on the slot→token softmax. With
 random-init slots it still produces a saliency signal (driven by RoBERTa's
