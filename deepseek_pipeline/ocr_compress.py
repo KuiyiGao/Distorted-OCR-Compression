@@ -48,6 +48,13 @@ class DeepSeekOCRCompressor:
         from transformers import AutoModel, AutoTokenizer
         import torch
 
+        # LlamaFlashAttention2 was removed in transformers ≥ 4.46.
+        # DeepSeek-OCR's remote modeling file imports it at module level,
+        # so we provide a fallback alias before from_pretrained executes.
+        import transformers.models.llama.modeling_llama as _llama
+        if not hasattr(_llama, "LlamaFlashAttention2"):
+            _llama.LlamaFlashAttention2 = _llama.LlamaAttention
+
         self._torch = torch
         torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
