@@ -188,6 +188,10 @@ class DeepSeekOCRCompressor:
         # Patch the now-downloaded modeling file on disk, then evict stale imports
         _patch_hf_remote_code()
 
+        # DeepSeek-OCR's infer() uses Accelerate dispatch hooks internally.
+        # Loading with device_map places weights AND registers the hooks so that
+        # infer() works; a post-load .to("cuda") skips hook registration and
+        # causes AcceleratorError / cudaErrorAssert at inference time.
         backend_chain: list[str] = []
         for b in (attn_implementation, "sdpa", "eager"):
             if b not in backend_chain:
@@ -200,6 +204,8 @@ class DeepSeekOCRCompressor:
                     _attn_implementation=backend,
                     trust_remote_code=True,
                     use_safetensors=True,
+                    torch_dtype=torch_dtype,
+                    device_map={"": device},
                 )
                 self.attn_implementation = backend
                 break
@@ -210,7 +216,7 @@ class DeepSeekOCRCompressor:
             raise RuntimeError(
                 f"Could not load DeepSeek-OCR with any of {backend_chain}: {last_err}"
             )
-        self.model = self.model.eval().to(device).to(torch_dtype)
+        self.model.eval()
         self.device = device
 
     def compress(
