@@ -25,7 +25,16 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-These checks use numerical fixtures and mocked OCR responses. They cover false positives on unanswerable questions, tied confidence scores, abstentions, exact word budgets, reading order, short-sequence saliency smoothing, and OCR return handling. They do not load models or call APIs.
+The core checks use NumPy fixtures and mocked OCR responses. They cover unanswerable questions, tied confidence scores, abstentions, word budgets, reading order, short-sequence saliency smoothing, and OCR return handling. Model and rendering tests are skipped when their optional dependencies are absent.
+
+To include CPU attention, gradient, saliency, and image-layout checks:
+
+```bash
+python -m pip install -e '.[render]' torch
+python -m unittest discover -s tests -v
+```
+
+These tests use random tensors and generated text images. They require no pretrained weights, Transformers models, or API calls.
 
 `cuad_evaluate` is a local diagnostic evaluator with EM, token F1, trapezoidal precision–recall area, and precision at recall of at least 0.8. It is not the official CUAD evaluator. Scores from this implementation should not be presented as directly comparable to published CUAD results.
 
@@ -33,4 +42,4 @@ These checks use numerical fixtures and mocked OCR responses. They cover false p
 
 Model execution requires separate dependencies, model weights, data, and suitable hardware. `requirements.txt` preserves the notebook environment dependencies; the lightweight package above is enough for offline checks. `DeepSeekOCRCompressor` accepts a model `revision` so a compatible checkpoint revision can be recorded explicitly.
 
-The notebooks are research records rather than a verified end-to-end release. Inspect their paths, dependency versions, split construction, prompts, and API settings before running them. API summarization and QA reading use `DEEPSEEK_API_KEY` or `DASHSCOPE_API_KEY` and may incur charges. No model runs or API calls were made for the maintenance checks.
+The notebooks are research records rather than a verified end-to-end release. Inspect their paths, dependency versions, split construction, prompts, and API settings before running them. API summarization and QA reading use `DEEPSEEK_API_KEY` or `DASHSCOPE_API_KEY` and may incur charges. Maintenance included a small CPU integration run with synthetic text and a random frozen embedding layer; it did not run pretrained OCR or QA models and does not measure their quality.

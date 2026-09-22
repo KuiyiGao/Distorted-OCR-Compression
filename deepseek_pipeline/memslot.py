@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from numbers import Real
 from typing import Iterable, Optional
 
 import torch
@@ -26,12 +27,19 @@ class MemSlotAttention(nn.Module):
         self.scale = d_proj ** -0.5
 
     def forward(self, H: torch.Tensor, mask: Optional[torch.Tensor] = None):
+        if H.ndim != 3 or not H.shape[0] or not H.shape[1]:
+            raise ValueError("H must contain at least one nonempty sequence")
+        if mask is not None:
+            if mask.dtype != torch.bool or mask.shape != H.shape[:2]:
+                raise ValueError("mask must be boolean with shape (batch, tokens)")
+            if not mask.any(dim=-1).all():
+                raise ValueError("each sequence must contain at least one unmasked token")
         Q = self.q_proj(self.slots)
         K = self.k_proj(H)
         V = self.v_proj(H)
         attn_logits = torch.einsum("kp,blp->bkl", Q, K) * self.scale
         if mask is not None:
-            attn_logits = attn_logits.masked_fill(~mask[:, None, :], -1e9)
+            attn_logits = attn_logits.masked_fill(~mask[:, None, :], torch.finfo(attn_logits.dtype).min)
         attn = attn_logits.softmax(dim=-1)
         S = torch.einsum("bkl,bld->bkd", attn, V)
 
@@ -48,6 +56,8 @@ class MemSlotAttention(nn.Module):
     def saliency(self, H: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         _, attn, _ = self.forward(H, mask)
         s = attn.max(dim=1).values
+        if s.dtype in (torch.float16, torch.bfloat16):
+            s = s.float()
         if mask is not None:
             s = s.masked_fill(~mask, 0.0)
 
@@ -110,8 +120,14 @@ class MemSlotSaliency:
         return records
 
     def train_on_contracts(self, contexts: Iterable[str], verbose: bool = True):
+        if isinstance(contexts, str):
+            raise ValueError("contexts must be an iterable of contract strings")
         contexts = list(contexts)
+        if not contexts or any(not isinstance(text, str) or not text.strip() for text in contexts):
+            raise ValueError("contexts must contain nonempty contract strings")
         records = self._embed(contexts)
+        if not records:
+            raise ValueError("tokenization produced no training windows")
         if verbose:
             print(f"[MemSlot] training on {len(records)} windows from {len(contexts)} contracts")
         opt = torch.optim.AdamW(self.memslot.parameters(), lr=self.cfg.lr)
@@ -144,6 +160,12 @@ class MemSlotSaliency:
     def word_weights(self, context: str, smooth_sigma: float = 2.0) -> list[tuple[str, float]]:
         import numpy as np
 
+        if not isinstance(context, str):
+            raise ValueError("context must be a string")
+        if isinstance(smooth_sigma, bool) or not isinstance(smooth_sigma, Real) or not math.isfinite(smooth_sigma) or smooth_sigma < 0:
+            raise ValueError("smooth_sigma must be finite and nonnegative")
+        if not context.strip():
+            return []
         enc = self.tokenizer(
             context,
             truncation=True,

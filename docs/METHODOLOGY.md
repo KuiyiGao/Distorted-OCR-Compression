@@ -25,4 +25,8 @@ Reader confidence is self-reported and is not a calibrated probability. These lo
 
 The offline tests verify metric edge cases, deterministic word pruning, and OCR wrapper contracts using fixtures. Gaussian smoothing now uses a centered full-convolution slice to keep the correct positions and output length when the word sequence is shorter than the kernel. The wrapper no longer rewrites downloaded model files or installs placeholder Transformers classes. A missing decoded-text return raises an error rather than silently becoming the string `None`.
 
+Attention rejects sequences with no valid tokens. Its padding sentinel follows the input dtype, and half-precision saliency is normalized in float32 so constant scores remain finite. Empty training input fails explicitly. Word scores use character offsets and take the maximum across overlapping windows. Rendering measures the full wrapped layout before allocating the image and rejects words or headers wider than the available line.
+
+A local CPU fixture exercised training, checkpoint save/reload, word scoring, pruning, and rendering using four synthetic documents and a random frozen embedding layer. This checks that the components connect; it is not a RoBERTa experiment or a reproduction of the saved notebook results.
+
 `n_vision_tokens` is a mode-based estimate from `metrics.py`; dynamic crops are not instrumented. No end-to-end run, OCR compatibility matrix, GPU execution, QA gain, or compression result was established by this maintenance work. Archived notebooks and their saved outputs have not been rerun.

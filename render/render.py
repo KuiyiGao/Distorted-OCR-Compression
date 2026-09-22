@@ -73,138 +73,99 @@ def _weight_to_color(phi, topic_id=-1):
     darkness = max(45, min(150, darkness))
     return (darkness, darkness, darkness)
 
+def _render_word_layout(word_weights, sizes, colors, question_text, image_width, s_max, margin):
+    if (not isinstance(image_width, (int, np.integer)) or
+            not isinstance(margin, (int, np.integer)) or margin < 0 or image_width <= 2 * margin):
+        raise ValueError("image_width and margin must be integers with margin >= 0 and image_width > 2 * margin")
+    if not word_weights:
+        return Image.new("RGB", (image_width, 200), color=(255, 255, 255))
+    usable_width = image_width - 2 * margin
+    font_path = _find_font()
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    question_font = _get_font(font_path, 18) if question_text else None
+    if question_text:
+        question_bounds = measure.textbbox((0, 0), f"Q: {question_text}", font=question_font)
+        if question_bounds[2] - question_bounds[0] > usable_width:
+            raise ValueError("Question header exceeds the available width; increase image_width or shorten question_text")
+    line_height = s_max + 10
+    baseline = margin + s_max + (56 if question_text else 0)
+    x = margin
+    placements = []
+    bottom = baseline
+    for (word, _), size, color in zip(word_weights, sizes, colors):
+        font = _get_font(font_path, int(size))
+        bbox = measure.textbbox((0, 0), word, font=font)
+        width = bbox[2] - bbox[0]
+        if width > usable_width:
+            raise ValueError("A word exceeds the available width; increase image_width or reduce font sizes")
+        if x + width > image_width - margin:
+            x = margin
+            baseline += line_height
+        position = (x, baseline)
+        bounds = measure.textbbox(position, word, font=font, anchor="ls")
+        bottom = max(bottom, bounds[3])
+        placements.append((word, font, color, position))
+        x += width + max(4, int(size * 0.25))
+
+    height = max(baseline + 30, bottom + margin)
+    image = Image.new("RGB", (image_width, height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    if question_text:
+        draw.text((margin, margin), f"Q: {question_text}", font=question_font, fill=(40, 40, 120))
+        draw.line([(margin, margin + 40), (image_width - margin, margin + 40)], fill=(200, 200, 200), width=1)
+    for word, font, color, position in placements:
+        draw.text(position, word, font=font, fill=color, anchor="ls")
+    return image
+
+
 def render_img(word_weights, question_text=None, image_width=900,
                s_min=18, s_max=44, beta=4.5, mu_pct=60.0, margin=24,
                topic_threshold=0.55, topic_max_gap=4):
     if not word_weights:
-        return Image.new('RGB', (image_width, 200), color=(255, 255, 255))
-
-    weights = np.array([w for _, w in word_weights], dtype=np.float32)
-    # Use a high percentile (default 60th) instead of median: legal docs are
-    # heavy-tailed, so median centring pushes the majority into the low bucket.
+        return _render_word_layout([], [], [], None, image_width, s_max, margin)
+    weights = np.array([weight for _, weight in word_weights], dtype=np.float32)
     mu = float(np.percentile(weights, mu_pct))
     phi = 1.0 / (1.0 + np.exp(-beta * (weights - mu)))
-    # Power curve (<1) lifts low-phi tokens so the small->large transition is
-    # gradual rather than stepped — easier on the eye and on OCR.
-    size_scale = np.power(phi, 0.55)
-    sizes = (s_min + (s_max - s_min) * size_scale).astype(int)
-
+    sizes = (s_min + (s_max - s_min) * np.power(phi, 0.55)).astype(int)
     topic_ids = assign_topic_ids(phi, threshold=topic_threshold, max_gap=topic_max_gap)
+    colors = [_weight_to_color(float(weight), topic_id=topic) for weight, topic in zip(phi, topic_ids)]
+    return _render_word_layout(word_weights, sizes, colors, question_text, image_width, s_max, margin)
 
-    font_path = _find_font()
-    line_height = s_max + 10
-
-    # Provisional tall canvas; crop at the end
-    est_lines = len(word_weights) // max(1, image_width // 40) + 4
-    canvas_h = max(600, (est_lines + 2) * line_height + 200)
-    img = Image.new('RGB', (image_width, canvas_h), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    y = margin
-    if question_text:
-        qf = _get_font(font_path, 18)
-        draw.text((margin, y), f"Q: {question_text}", font=qf, fill=(40, 40, 120))
-        y += 40
-        draw.line([(margin, y), (image_width - margin, y)], fill=(200, 200, 200), width=1)
-        y += 16
-
-    # Baseline-aligned layout: every word on the current line sits on the same baseline
-    x = margin
-    baseline = y + s_max  # baseline y-coord for first content line
-    for idx, ((word, _), size, p) in enumerate(zip(word_weights, sizes, phi)):
-        font = _get_font(font_path, size)
-        bbox = draw.textbbox((0, 0), word, font=font)
-        w_width = bbox[2] - bbox[0]
-        if x + w_width > image_width - margin:
-            x = margin
-            baseline += line_height
-        color = _weight_to_color(float(p), topic_id=topic_ids[idx])
-        draw.text((x, baseline), word, font=font, fill=color, anchor="ls")
-        x += w_width + max(4, int(size * 0.25))
-
-    final_h = baseline + 30
-    return img.crop((0, 0, image_width, min(final_h, canvas_h)))
 
 def render_img_tiered(word_weights, tiers, question_text=None,
                       image_width=900, s_min=16, s_mid=26, s_max=46, margin=24,
                       topic_max_gap=4):
-    """
-    Three-tier rendering driven by composite saliency phi and tier ids
-    (2=primary, 1=secondary, 0=tertiary).
-
-    Visual mapping:
-        tier 2 -> s_max font, dark red
-        tier 1 -> interpolated [s_mid, s_max-2] font, dark grey scaling with phi
-        tier 0 -> s_min font, light grey
-    """
     if not word_weights:
-        return Image.new("RGB", (image_width, 200), color=(255, 255, 255))
-
-    weights = np.array([w for _, w in word_weights], dtype=np.float32)
-    tiers = np.asarray(tiers, dtype=np.int8)
-
-    # Normalise within secondary tier for smooth interpolation
-    sec_mask = tiers == 1
-    if sec_mask.any():
-        sec_w = weights[sec_mask]
-        lo, hi = float(sec_w.min()), float(sec_w.max())
-        sec_norm = (sec_w - lo) / (hi - lo + 1e-8)
-    sec_idx = 0
-
-    # Cluster primary-tier tokens into topics by positional proximity so each
-    # distinct salient region gets a distinct dark palette colour.
-    primary_mask = (tiers == 2).astype(np.float32)
-    topic_ids = assign_topic_ids(primary_mask, threshold=0.5, max_gap=topic_max_gap)
-
+        return _render_word_layout([], [], [], None, image_width, s_max, margin)
+    weights = np.array([weight for _, weight in word_weights], dtype=np.float32)
+    tiers = np.asarray(tiers)
+    if tiers.shape != weights.shape or not np.isin(tiers, (0, 1, 2)).all():
+        raise ValueError("tiers must contain one class ID from 0 to 2 per word")
+    tiers = tiers.astype(np.int8)
+    secondary = tiers == 1
+    if secondary.any():
+        secondary_weights = weights[secondary]
+        lo, hi = float(secondary_weights.min()), float(secondary_weights.max())
+        secondary_normalized = (secondary_weights - lo) / (hi - lo + 1e-8)
+    secondary_index = 0
+    topic_ids = assign_topic_ids((tiers == 2).astype(np.float32), threshold=0.5, max_gap=topic_max_gap)
     sizes = np.empty(len(weights), dtype=np.int32)
-    colors = [None] * len(weights)
-    for i, (_, w) in enumerate(word_weights):
-        t = int(tiers[i])
-        if t == 2:
-            sizes[i] = s_max
-            tid = topic_ids[i]
-            base = TOPIC_COLORS[tid % len(TOPIC_COLORS)] if tid >= 0 else (170, 25, 25)
-            colors[i] = base                  # primary: topic colour
-        elif t == 1:
-            phi = float(sec_norm[sec_idx]); sec_idx += 1
-            # Smooth power-curve size ramp so the jump to primary is gradual.
-            sizes[i] = int(s_mid + (s_max - 2 - s_mid) * (phi ** 0.55))
-            grey = int(75 - 30 * phi)
-            colors[i] = (grey, grey, grey)    # secondary: dark grey
+    colors = []
+    for index, tier in enumerate(tiers):
+        if tier == 2:
+            sizes[index] = s_max
+            topic = topic_ids[index]
+            colors.append(TOPIC_COLORS[topic % len(TOPIC_COLORS)] if topic >= 0 else (170, 25, 25))
+        elif tier == 1:
+            weight = float(secondary_normalized[secondary_index])
+            secondary_index += 1
+            sizes[index] = int(s_mid + (s_max - 2 - s_mid) * (weight ** 0.55))
+            grey = int(75 - 30 * weight)
+            colors.append((grey, grey, grey))
         else:
-            sizes[i] = s_min
-            colors[i] = (120, 120, 120)       # tertiary: mid-grey (OCR-safe)
-
-    font_path = _find_font()
-    line_height = s_max + 10
-
-    est_lines = len(word_weights) // max(1, image_width // 40) + 4
-    canvas_h = max(600, (est_lines + 2) * line_height + 200)
-    img = Image.new("RGB", (image_width, canvas_h), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    y = margin
-    if question_text:
-        qf = _get_font(font_path, 18)
-        draw.text((margin, y), f"Q: {question_text}", font=qf, fill=(40, 40, 120))
-        y += 40
-        draw.line([(margin, y), (image_width - margin, y)], fill=(200, 200, 200), width=1)
-        y += 16
-
-    x = margin
-    baseline = y + s_max
-    for (word, _), size, color in zip(word_weights, sizes, colors):
-        font = _get_font(font_path, int(size))
-        bbox = draw.textbbox((0, 0), word, font=font)
-        w_width = bbox[2] - bbox[0]
-        if x + w_width > image_width - margin:
-            x = margin
-            baseline += line_height
-        draw.text((x, baseline), word, font=font, fill=color, anchor="ls")
-        x += w_width + max(4, int(size * 0.25))
-
-    final_h = baseline + 30
-    return img.crop((0, 0, image_width, min(final_h, canvas_h)))
+            sizes[index] = s_min
+            colors.append((120, 120, 120))
+    return _render_word_layout(word_weights, sizes, colors, question_text, image_width, s_max, margin)
 
 
 # Legacy alias + bar chart helpers kept for backward compatibility
