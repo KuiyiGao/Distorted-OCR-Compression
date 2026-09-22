@@ -1,42 +1,3 @@
-"""MemSlot attention over a frozen RoBERTa backbone.
-
-Why this module exists
-----------------------
-The original `run.py` pipeline computed saliency by fine-tuning LegalBERT as
-a **token classifier conditioned on the question**. That leaks the question
-into the rendering, which biases everything that follows (OCR, prune,
-summary). To keep the evaluation honest we need a saliency signal that is a
-function of the contract alone.
-
-Design
-------
-* Backbone: frozen ``roberta-base``. It is pretrained on generic text, so
-  the CUAD test split cannot leak through it.
-* MemSlot: ``K`` learnable query vectors attend over the contract tokens.
-  Unsupervised training on CUAD *train-split contracts only* with two
-  losses:
-    1. reconstruction - the mixture of slot vectors must approximate each
-       contextual hidden state (slot attention objective);
-    2. diversity - slots should span orthogonal directions.
-  No question, no answer, no clause label is ever consumed.
-* Saliency: for each token, ``s_i = max_k softmax_k(M H_i^T / sqrt d)``.
-  Gaussian smoothed, min-max scaled to [0, 1] to feed `render_tsvr_image`.
-
-Math
-----
-Let ``H ∈ R^{L×d}`` be the frozen token embeddings, ``M ∈ R^{K×d}`` the
-trainable slots.
-
-    A_{k,i} = softmax_i( (M Q)(H W_k)^T / sqrt d )             (slot -> token)
-    S_k     = sum_i A_{k,i} V(H_i)                              (slot state)
-    H_hat_i = sum_k softmax_k( Q'(H_i) K'(S)^T / sqrt d ) V'(S)  (reconstruct)
-
-Losses::
-
-    L_rec  = mean ||H - H_hat||_2^2
-    L_div  = ||M_norm M_norm^T - I||_F^2
-    L      = L_rec + λ · L_div
-"""
 from __future__ import annotations
 
 import math
@@ -47,8 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .saliency import gaussian_smooth
 
-# --------------------------------------------------------------------------- module
 
 class MemSlotAttention(nn.Module):
     def __init__(self, d_model: int = 768, n_slots: int = 32, d_proj: int = 256):
@@ -58,40 +19,38 @@ class MemSlotAttention(nn.Module):
         self.q_proj = nn.Linear(d_model, d_proj, bias=False)
         self.k_proj = nn.Linear(d_model, d_proj, bias=False)
         self.v_proj = nn.Linear(d_model, d_model, bias=False)
-        # reconstruction path: token queries over slots
+
         self.rq_proj = nn.Linear(d_model, d_proj, bias=False)
         self.rk_proj = nn.Linear(d_model, d_proj, bias=False)
         self.rv_proj = nn.Linear(d_model, d_model, bias=False)
         self.scale = d_proj ** -0.5
 
     def forward(self, H: torch.Tensor, mask: Optional[torch.Tensor] = None):
-        # H: (B, L, d)
-        Q = self.q_proj(self.slots)                            # (K, p)
-        K = self.k_proj(H)                                     # (B, L, p)
-        V = self.v_proj(H)                                     # (B, L, d)
+        Q = self.q_proj(self.slots)
+        K = self.k_proj(H)
+        V = self.v_proj(H)
         attn_logits = torch.einsum("kp,blp->bkl", Q, K) * self.scale
         if mask is not None:
             attn_logits = attn_logits.masked_fill(~mask[:, None, :], -1e9)
-        attn = attn_logits.softmax(dim=-1)                     # (B, K, L): distribute each slot over tokens
-        S = torch.einsum("bkl,bld->bkd", attn, V)              # (B, K, d)
+        attn = attn_logits.softmax(dim=-1)
+        S = torch.einsum("bkl,bld->bkd", attn, V)
 
-        # Reconstruct each token from the slot states
-        rq = self.rq_proj(H)                                   # (B, L, p)
-        rk = self.rk_proj(S)                                   # (B, K, p)
-        rv = self.rv_proj(S)                                   # (B, K, d)
+
+        rq = self.rq_proj(H)
+        rk = self.rk_proj(S)
+        rv = self.rv_proj(S)
         recon_logits = torch.einsum("blp,bkp->blk", rq, rk) * self.scale
-        recon = recon_logits.softmax(dim=-1)                   # (B, L, K)
-        H_hat = torch.einsum("blk,bkd->bld", recon, rv)        # (B, L, d)
+        recon = recon_logits.softmax(dim=-1)
+        H_hat = torch.einsum("blk,bkd->bld", recon, rv)
 
         return H_hat, attn, S
 
     def saliency(self, H: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """Per-token saliency in [0, 1] from the slot->token attention weights."""
         _, attn, _ = self.forward(H, mask)
-        s = attn.max(dim=1).values                             # (B, L)
+        s = attn.max(dim=1).values
         if mask is not None:
             s = s.masked_fill(~mask, 0.0)
-            # ignore padding when computing the per-sample min
+
             s_for_min = s.masked_fill(~mask, float("inf"))
             s_min = s_for_min.min(dim=-1, keepdim=True).values
             s_min = torch.where(torch.isinf(s_min), torch.zeros_like(s_min), s_min)
@@ -100,8 +59,6 @@ class MemSlotAttention(nn.Module):
         s_max = s.max(dim=-1, keepdim=True).values
         return ((s - s_min) / (s_max - s_min + 1e-9)).clamp(0.0, 1.0)
 
-
-# --------------------------------------------------------------------------- trainer
 
 @dataclass
 class MemSlotConfig:
@@ -115,13 +72,6 @@ class MemSlotConfig:
 
 
 class MemSlotSaliency:
-    """End-to-end wrapper: frozen RoBERTa + trainable MemSlot.
-
-    The class never sees questions or gold answers. It only reads raw
-    contract strings from the CUAD *train split* for training; at inference
-    it produces `(word, weight)` lists consumable by ``render/render.py``.
-    """
-
     def __init__(
         self,
         backbone_name: str = "roberta-base",
@@ -139,10 +89,8 @@ class MemSlotSaliency:
         d_model = self.backbone.config.hidden_size
         self.memslot = MemSlotAttention(d_model=d_model, n_slots=config.n_slots).to(device)
 
-    # ------------------------------------------------------------------ training
 
     def _embed(self, texts: list[str]) -> list[dict]:
-        """Slice each context into overlapping windows; return encoder inputs."""
         records = []
         for text in texts:
             enc = self.tokenizer(
@@ -191,16 +139,9 @@ class MemSlotSaliency:
                 print(f"  epoch {epoch + 1}/{self.cfg.epochs}  loss={running / max(n_batches,1):.4f}")
         self.memslot.eval()
 
-    # ------------------------------------------------------------------ inference
 
     @torch.no_grad()
     def word_weights(self, context: str, smooth_sigma: float = 2.0) -> list[tuple[str, float]]:
-        """Question-agnostic word-level saliency for `render_tsvr_image`.
-
-        Windows the text the same way as training, fuses overlapping window
-        scores via max, then maps back to whitespace-delimited words via
-        byte offsets, finally Gaussian smooths along word position.
-        """
         import numpy as np
 
         enc = self.tokenizer(
@@ -213,21 +154,21 @@ class MemSlotSaliency:
             padding="max_length",
         )
 
-        # per-char saliency so overlapping windows merge naturally
+
         char_score = np.zeros(len(context), dtype=np.float32)
         char_hit = np.zeros(len(context), dtype=np.bool_)
         for w in range(len(enc["input_ids"])):
             ids = torch.tensor(enc["input_ids"][w]).unsqueeze(0).to(self.device)
             mask = torch.tensor(enc["attention_mask"][w]).unsqueeze(0).to(self.device).bool()
             H = self.backbone(input_ids=ids, attention_mask=mask.long()).last_hidden_state
-            s = self.memslot.saliency(H, mask=mask).squeeze(0).cpu().numpy()  # (L,)
+            s = self.memslot.saliency(H, mask=mask).squeeze(0).cpu().numpy()
             for tok_idx, (a, b) in enumerate(enc["offset_mapping"][w]):
                 if b <= a:
                     continue
                 char_score[a:b] = np.maximum(char_score[a:b], s[tok_idx])
                 char_hit[a:b] = True
 
-        # aggregate to words (whitespace split) via max-pool over their char range
+
         pairs: list[tuple[str, float]] = []
         i = 0
         while i < len(context):
@@ -242,21 +183,18 @@ class MemSlotSaliency:
             pairs.append((word, score))
             i = j
 
-        # Gaussian smoothing along word position
+
         if pairs and smooth_sigma > 0:
             scores = np.array([s for _, s in pairs], dtype=np.float32)
-            radius = max(1, int(3 * smooth_sigma))
-            kx = np.arange(-radius, radius + 1)
-            kernel = np.exp(-0.5 * (kx / smooth_sigma) ** 2); kernel /= kernel.sum()
-            smoothed = np.convolve(scores, kernel, mode="same")
-            # rescale so the visual layer still uses the full [0,1] range
+            smoothed = gaussian_smooth(scores, smooth_sigma)
+
             mn, mx = smoothed.min(), smoothed.max()
             smoothed = (smoothed - mn) / (mx - mn + 1e-9)
             pairs = [(w, float(s)) for (w, _), s in zip(pairs, smoothed)]
 
         return pairs
 
-    # ------------------------------------------------------------------ persistence
+
     def save(self, path: str):
         torch.save({"state_dict": self.memslot.state_dict(), "cfg": self.cfg.__dict__}, path)
 

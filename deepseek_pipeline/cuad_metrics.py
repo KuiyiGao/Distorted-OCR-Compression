@@ -1,37 +1,16 @@
-"""CUAD-style evaluation metrics.
-
-The official CUAD evaluator (``github.com/TheAtticusProject/cuad``) scores a
-predicted span against every gold annotation using Jaccard similarity, then
-summarizes the whole test set with:
-
-* **AUPR** – area under the precision-recall curve (predictions sorted by
-  the reader's confidence, true positive iff Jaccard ≥ τ).
-* **Precision @ 80 % Recall** – the precision attained once a confidence
-  threshold admits 80 % of the gold-answerable questions.
-* Plain SQuAD **EM / F1** on answerable items.
-
-We preserve that structure here.  Because an API reader rarely exposes token
-log-probabilities, we accept an explicit ``confidence`` per prediction (the
-notebook elicits a 1-5 self-report from the reader and normalises it to
-[0, 1]). If confidence is absent, AUPR collapses to mean precision at the
-single operating point and we flag that in the output.
-"""
 from __future__ import annotations
 
 import re
 import string
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, Optional
-
+from typing import Optional
 import numpy as np
 
 
-# ----- helpers -------------------------------------------------------------
-
 def _normalize(s: str) -> str:
     s = s.lower()
-    s = "".join(ch for ch in s if ch not in set(string.punctuation))
+    s = "".join(ch for ch in s if ch not in string.punctuation)
     s = re.sub(r"\b(a|an|the)\b", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
@@ -49,15 +28,12 @@ def squad_f1(pred: str, gold: str) -> float:
     pt, gt = _normalize(pred).split(), _normalize(gold).split()
     if not pt or not gt:
         return float(pt == gt)
-    common = Counter(pt) & Counter(gt)
-    same = sum(common.values())
+    same = sum((Counter(pt) & Counter(gt)).values())
     if not same:
         return 0.0
-    prec = same / len(pt); rec = same / len(gt)
-    return 2 * prec * rec / (prec + rec)
+    precision, recall = same / len(pt), same / len(gt)
+    return 2 * precision * recall / (precision + recall)
 
-
-# ----- core evaluator ------------------------------------------------------
 
 @dataclass
 class CUADScore:
@@ -75,70 +51,62 @@ def cuad_evaluate(
     confidences: Optional[list[float]] = None,
     jaccard_threshold: float = 0.5,
 ) -> CUADScore:
-    """Evaluate one bucket (e.g. one compression method).
-
-    * ``predictions``  – model answers (empty string means "no answer").
-    * ``golds``        – list of gold spans per question; empty list means
-                         the question is truly unanswerable.
-    * ``confidences``  – optional [0, 1] self-reported confidence per item.
-
-    A prediction is a **true positive** iff Jaccard(pred, some-gold) ≥ τ on
-    an answerable item.  An empty prediction on an answerable item is a
-    false negative.  An empty gold list with a non-empty prediction is a
-    false positive.
-    """
-    assert len(predictions) == len(golds)
     n = len(predictions)
+    if len(golds) != n:
+        raise ValueError("predictions and golds must have equal lengths")
+    if not np.isfinite(jaccard_threshold) or not 0 < jaccard_threshold <= 1:
+        raise ValueError("jaccard_threshold must be in (0, 1]")
+    if any(not isinstance(p, str) for p in predictions):
+        raise ValueError("each prediction must be a string")
+    if any(not isinstance(gs, (list, tuple)) or
+           any(not isinstance(g, str) or not g.strip() for g in gs) for gs in golds):
+        raise ValueError("each gold entry must be a list of nonempty spans, or []")
     if confidences is None:
-        confidences = [1.0 if p.strip() else 0.0 for p in predictions]
-        note = "confidence unavailable; AUPR computed with binary signal"
+        confidence = np.ones(n)
+        note = "local diagnostic; confidence unavailable; one tied operating point"
     else:
-        note = "AUPR computed from reader self-reported confidence"
-        assert len(confidences) == n
+        confidence = np.asarray(confidences, dtype=float)
+        if confidence.shape != (n,) or not np.isfinite(confidence).all():
+            raise ValueError("confidences must be a finite one-dimensional value per item")
+        if np.any((confidence < 0) | (confidence > 1)):
+            raise ValueError("confidences must be in [0, 1]")
+        note = "local diagnostic; supplied confidence; ties grouped by threshold"
 
-    # per-item score
-    ems, f1s, tps = [], [], []
-    is_answerable = []
-    for pred, gold_list in zip(predictions, golds):
-        answerable = bool(gold_list)
-        is_answerable.append(answerable)
-        if not answerable:
+    if not n:
+        return CUADScore(float("nan"), float("nan"), float("nan"),
+                         float("nan"), 0, note + "; empty batch")
+    ems, f1s, true_positives = [], [], []
+    attempts = np.asarray([bool(p.strip()) for p in predictions])
+    n_gold = sum(bool(gs) for gs in golds)
+    for pred, spans in zip(predictions, golds):
+        if not spans:
             ems.append(float(not pred.strip()))
             f1s.append(float(not pred.strip()))
-            tps.append(not pred.strip())
-            continue
-        em_i = max(float(_normalize(pred) == _normalize(g)) for g in gold_list)
-        f1_i = max(squad_f1(pred, g) for g in gold_list)
-        tp_i = max(jaccard(pred, g) for g in gold_list) >= jaccard_threshold
-        ems.append(em_i); f1s.append(f1_i); tps.append(bool(tp_i))
-
-    em_mean = float(np.mean(ems))
-    f1_mean = float(np.mean(f1s))
-
-    # PR curve over answerable items, sorted by descending confidence
-    order = np.argsort(-np.asarray(confidences))
-    tp_sorted = np.asarray(tps)[order]
-    answ_sorted = np.asarray(is_answerable)[order]
-
-    n_gold = int(sum(is_answerable))
+            true_positives.append(False)
+        else:
+            ems.append(max(float(_normalize(pred) == _normalize(g)) for g in spans))
+            f1s.append(max(squad_f1(pred, g) for g in spans))
+            true_positives.append(bool(pred.strip()) and
+                                  max(jaccard(pred, g) for g in spans) >= jaccard_threshold)
+    em, f1 = float(np.mean(ems)), float(np.mean(f1s))
     if n_gold == 0:
-        return CUADScore(em_mean, f1_mean, float("nan"), float("nan"), n, "no answerable items")
+        return CUADScore(em, f1, float("nan"), float("nan"), n,
+                         note + "; no answerable items")
+    if not attempts.any():
+        return CUADScore(em, f1, 0.0, 0.0, n, note + "; all predictions abstained")
 
-    tp_cum = np.cumsum(tp_sorted & answ_sorted)
-    pred_cum = np.cumsum(answ_sorted.astype(int))        # only count answerable predictions
-    # guard against empty rank prefixes
-    precision = np.where(pred_cum > 0, tp_cum / np.maximum(pred_cum, 1), 1.0)
-    recall = tp_cum / n_gold
+    order = np.argsort(-confidence[attempts], kind="stable")
+    sorted_confidence = confidence[attempts][order]
+    sorted_tp = np.asarray(true_positives, dtype=int)[attempts][order]
 
-    # AUPR via trapezoidal integration on (recall, precision)
-    order_r = np.argsort(recall)
-    aupr = float(np.trapz(precision[order_r], recall[order_r]))
+    ends = np.r_[np.flatnonzero(np.diff(sorted_confidence) != 0), len(order) - 1]
+    tp = np.cumsum(sorted_tp)[ends]
+    precision = tp / (ends + 1)
+    recall = tp / n_gold
+    curve_precision = np.r_[1.0, precision]
+    curve_recall = np.r_[0.0, recall]
 
-    # interpolated precision @ 80% recall
-    if recall.max() < 0.8:
-        p_at_80 = 0.0
-    else:
-        p_at_80 = float(precision[recall >= 0.8].max())
-
-    return CUADScore(em=em_mean, f1=f1_mean, aupr=aupr,
-                     precision_at_80_recall=p_at_80, n=n, threshold_note=note)
+    aupr = float(np.sum(np.diff(curve_recall) *
+                        (curve_precision[:-1] + curve_precision[1:]) / 2))
+    p80 = float(precision[recall >= 0.8].max()) if np.any(recall >= 0.8) else 0.0
+    return CUADScore(em, f1, aupr, p80, n, note)

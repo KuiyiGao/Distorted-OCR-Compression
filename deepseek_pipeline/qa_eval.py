@@ -1,10 +1,3 @@
-"""CUAD QA evaluator backed by a chat-completion API.
-
-We use the same reader for every compression branch so that the only
-variable between branches is the compressed context.
-
->>> ### RESERVE API KEY: set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY before use.
-"""
 from __future__ import annotations
 
 import os
@@ -33,7 +26,6 @@ def _normalize(s: str) -> str:
 
 
 def squad_em_f1(pred: str, golds: Iterable[str]) -> tuple[float, float]:
-    """SQuAD-style EM and F1; CUAD golds can be an empty list (unanswerable)."""
     golds = list(golds)
     if not golds:
         return (float(pred.strip() == ""), float(pred.strip() == ""))
@@ -69,16 +61,12 @@ class ApiQAReader:
         elif provider in ("qwen", "qwen-long"):
             self.api_key_env = "DASHSCOPE_API_KEY"
             self.endpoint = self.QWEN_ENDPOINT
-            # qwen-long supports ~10M-token inputs; qwen-plus caps at ~32k.
+
             self.model_name = model_name or ("qwen-long" if provider == "qwen-long" else "qwen-plus")
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
     def answer(self, context: str, question: str) -> tuple[str, float]:
-        """Return ``(answer, confidence)``; confidence is read from the
-        model's own JSON reply and normalised to [0, 1]. Used for the CUAD
-        AUPR / precision@recall computation.
-        """
         import json as _json
         import requests
 
@@ -116,8 +104,8 @@ class ApiQAReader:
             ans = str(parsed.get("answer", "")).strip()
             conf = float(parsed.get("confidence", 3)) / 5.0
         except Exception:
-            # Fall back to raw text with a neutral confidence, but keep the
-            # value readable rather than dumping the raw JSON string.
+
+
             m = re.search(r'"answer"\s*:\s*"([^"]*)"', raw)
             ans = (m.group(1) if m else raw).strip()
             conf = 0.5
@@ -127,5 +115,5 @@ class ApiQAReader:
         pred, conf = self.answer(context, question)
         em, f1 = squad_em_f1(pred, gold_answers)
         out = QAPrediction(question=question, prediction=pred, gold_answers=gold_answers, em=em, f1=f1)
-        out.confidence = conf  # type: ignore[attr-defined]
+        out.confidence = conf
         return out

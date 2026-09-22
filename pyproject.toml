@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memslot-course-project"
+version = "0.1.0"
+description = "MemSlot saliency, document rendering, and local span-QA diagnostics"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+render = ["Pillow>=10", "matplotlib>=3.7", "scipy>=1.10"]
+model = ["torch", "transformers", "requests"]
+notebook = ["jupyter", "pandas", "seaborn", "tqdm"]
+
+[tool.setuptools.packages.find]
+include = ["deepseek_pipeline*", "render*"]

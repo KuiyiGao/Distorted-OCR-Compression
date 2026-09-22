@@ -1,14 +1,9 @@
-"""Baselines: (1) saliency-based token pruning, (2) API-based summarization.
-
-Both produce a compressed *text* string with a known token count, so the
-downstream QA reader (qa_eval.ApiQAReader) can score them head-to-head
-against the DeepSeek-OCR vision path.
-"""
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Optional
 
 
 @dataclass
@@ -19,39 +14,28 @@ class CompressedText:
 
 
 class SaliencyPruner:
-    """Keep the top-k fraction of words ranked by TSVR saliency score.
-
-    Input: list of (word, weight) tuples produced by the existing
-    render.utils.stitch_and_smooth_saliency pipeline.
-    """
-
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
 
     def compress(self, word_weights: list[tuple[str, float]], keep_ratio: float) -> CompressedText:
-        if not word_weights:
-            return CompressedText(text="", n_tokens=0, method=f"prune@{keep_ratio}")
-        n_keep = max(1, int(len(word_weights) * keep_ratio))
-        # Keep positional order so the reader sees a coherent(ish) excerpt.
-        threshold = sorted((w for _, w in word_weights), reverse=True)[n_keep - 1]
-        kept = [w for (w, s) in word_weights if s >= threshold]
+        if not math.isfinite(keep_ratio) or not 0 <= keep_ratio <= 1:
+            raise ValueError("keep_ratio must be finite and in [0, 1]")
+        if any(not isinstance(word, str) or not word.strip() for word, _ in word_weights):
+            raise ValueError("words must be nonempty strings")
+        weights = [float(weight) for _, weight in word_weights]
+        if not all(math.isfinite(weight) for weight in weights):
+            raise ValueError("saliency weights must be finite")
+        n_keep = int(len(word_weights) * keep_ratio)
+        if not n_keep:
+            return CompressedText(text="", n_tokens=0, method=f"prune@{keep_ratio:.2f}")
+        ranking = sorted(range(len(word_weights)), key=lambda index: (-weights[index], index))
+        kept = [word_weights[index][0] for index in sorted(ranking[:n_keep])]
         text = " ".join(kept)
         n_tok = len(self.tokenizer.encode(text, add_special_tokens=False))
         return CompressedText(text=text, n_tokens=n_tok, method=f"prune@{keep_ratio:.2f}")
 
 
 class ApiSummarizer:
-    """Summarize long context via a chat-completion API.
-
-    Supported providers (set ``provider`` and put the key in env):
-
-    * ``deepseek``  – needs ``DEEPSEEK_API_KEY``. Same model family as the
-      DeepSeek-OCR decoder, giving the fairest baseline.
-    * ``qwen``      – needs ``DASHSCOPE_API_KEY``.
-
-    >>> ### RESERVE API KEY: set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY
-    """
-
     DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
     QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 

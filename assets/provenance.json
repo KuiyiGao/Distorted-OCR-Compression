@@ -1,0 +1,9 @@
+{
+  "source": "notebooks/MemSlot_Report.ipynb",
+  "source_commit": "b48f11cf7cdc05d194aa6bd33ec15369d654dfc1",
+  "notebook_sha256": "abf89fac314e0a9e29c26d840c822deacf50f0ebc4762d22dde19eb283c73040",
+  "cell_index_zero_based": 6,
+  "asset": "saliency-saved.png",
+  "asset_sha256": "17c3eec1635423c50b5cf285b8685c4607e834b949e1abf10e4bb4dbbe5f5cf3",
+  "status": "saved notebook output; not rerun; qualitative saliency comparison"
+}
